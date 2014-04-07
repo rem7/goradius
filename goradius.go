@@ -1,4 +1,4 @@
-package main
+package goradius
 
 import (
 	"bytes"
@@ -8,9 +8,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 )
-
-// // echo "User-Name=steve,User-Password=testing" | radclient -sx 127.0.0.1:1812 auth secret
 
 const (
 	headerEnd           = 20
@@ -19,9 +18,22 @@ const (
 
 type RadiusServer struct {
 	Secret string
+	// still debating  how we want to handle the policy...
+	// do we have one handler and let the user deal with
+	// the flow, or
+	// do we do it middleware style were we jump from one
+	// function to the next...
+	handler    func(req *RadiusPacket, res *RadiusPacket) error // option 1
+	middleware []func(*RadiusPacket, *RadiusPacket) error       // option 2
 }
 
-type RadiusAttribute struct {
+func (r *RadiusServer) Handler(f func(*RadiusPacket, *RadiusPacket) error) {
+
+	r.handler = f
+
+}
+
+type RadiusRawAttribute struct {
 	TypeValue uint8
 	Length    uint8
 	Value     []byte
@@ -36,7 +48,80 @@ type RadiusHeader struct {
 
 type RadiusPacket struct {
 	RadiusHeader
-	Attributes []RadiusAttribute
+	// Attributes []RadiusRawAttribute
+	Attributes map[string][]byte
+}
+
+func NewRadiusPacket() *RadiusPacket {
+	var p RadiusPacket
+	p.Attributes = make(map[string][]byte)
+	return &p
+
+}
+
+func (p *RadiusPacket) AddAttribute(attrType string, value []byte) error {
+
+	// val := attributes_to_code[attrType]
+	// if val == "" {
+	// 	errStr := fmt.Sprintf("Uknown attribute: %v", attrType)
+	// 	return errors.New(errStr)
+	// }
+
+	p.Attributes[attrType] = value
+	// attr := RadiusRawAttribute{}
+	// attr.TypeValue = attrType
+	// attr.Length = len(value)
+	// attr.Value = value
+
+	return nil
+}
+
+func (p *RadiusPacket) GetAttribute(attrType string) []byte {
+	return p.Attributes[attrType]
+}
+
+func (r *RadiusServer) handleConn(conn *net.UDPConn) error {
+
+	bufr := make([]byte, 4096)
+	rawMsgSize, addr, err := conn.ReadFromUDP(bufr)
+	if err != nil {
+		panic(err)
+	}
+
+	if rawMsgSize < 20 {
+		return errors.New("Message to short.")
+	}
+
+	rawMsg := bufr[0:rawMsgSize]
+	requestPacket, err := r.parseRADIUSPacket(rawMsg)
+
+	responsePacket := NewRadiusPacket()
+	responsePacket.RadiusHeader = requestPacket.RadiusHeader
+
+	// for _, m := range r.middleware {
+	// 	e := m(requestPacket, responsePacket)
+	// 	if e != nil {
+	// 	}
+	// }
+
+	r.handler(requestPacket, responsePacket)
+
+	output, err := r.encodeRadiusPacket(responsePacket, "secret")
+	if err != nil {
+		return err
+	}
+
+	bytesWritten, err := conn.WriteToUDP(output, addr)
+	if bytesWritten != int(responsePacket.Length) {
+		log.Printf("WARNING: Written bytes in UDP socket did not match packet size. Packet: %v Written: %v",
+			responsePacket.Length, bytesWritten)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *RadiusServer) ListenAndServe(addr_str string) error {
@@ -61,52 +146,6 @@ func (r *RadiusServer) ListenAndServe(addr_str string) error {
 
 	}
 
-}
-
-func main() {
-
-	log.Printf("Server started")
-	server := RadiusServer{}
-	server.Secret = "secret"
-	log.Fatal(server.ListenAndServe("0.0.0.0:1812"))
-
-}
-
-func (r *RadiusServer) handleConn(conn *net.UDPConn) error {
-
-	bufr := make([]byte, 4096)
-	rawMsgSize, addr, err := conn.ReadFromUDP(bufr)
-	if err != nil {
-		panic(err)
-	}
-
-	if rawMsgSize < 20 {
-		return errors.New("Message to short.")
-	}
-
-	rawMsg := bufr[0:rawMsgSize]
-	radiusPacket, err := r.parseRADIUSPacket(rawMsg)
-
-	responsePacket := RadiusPacket{}
-	responsePacket.RadiusHeader = radiusPacket.RadiusHeader
-	responsePacket.Code = 2
-
-	output, err := r.encodeRadiusPacket(&responsePacket, "secret")
-	if err != nil {
-		return err
-	}
-
-	bytesWritten, err := conn.WriteToUDP(output, addr)
-	if bytesWritten != int(responsePacket.Length) {
-		log.Printf("WARNING: Written bytes in UDP socket did not match packet size. Packet: %v Written: %v",
-			responsePacket.Length, bytesWritten)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (r *RadiusServer) encodeRadiusPacket(packet *RadiusPacket, secret string) ([]byte, error) {
@@ -142,7 +181,7 @@ func (r *RadiusServer) encodeRadiusPacket(packet *RadiusPacket, secret string) (
 
 func (r *RadiusServer) parseRADIUSPacket(rawMsg []byte) (*RadiusPacket, error) {
 
-	packet := RadiusPacket{}
+	packet := NewRadiusPacket()
 	reader := bytes.NewReader(rawMsg)
 
 	err := binary.Read(reader, binary.BigEndian, &packet.RadiusHeader)
@@ -150,16 +189,24 @@ func (r *RadiusServer) parseRADIUSPacket(rawMsg []byte) (*RadiusPacket, error) {
 		return nil, err
 	}
 
-	rawAttributes := rawMsg[headerEnd:]
-	packet.Attributes = r.parseAttributes(rawAttributes, packet.Authenticator)
+	rawAttributesBytes := rawMsg[headerEnd:]
 
-	return &packet, nil
+	rawAttributes := r.parseAttributes(rawAttributesBytes, packet.Authenticator)
+
+	for _, attr := range rawAttributes {
+		name := code_to_attributes[attr.TypeValue]
+		packet.AddAttribute(name, attr.Value)
+	}
+
+	// TODO convert rawAttributes to readable attrs
+
+	return packet, nil
 
 }
 
-func (r *RadiusServer) parseAttributes(data []byte, requestAuthenticator [16]byte) []RadiusAttribute {
+func (r *RadiusServer) parseAttributes(data []byte, requestAuthenticator [16]byte) []RadiusRawAttribute {
 
-	var attrs []RadiusAttribute
+	var attrs []RadiusRawAttribute
 	reader := bytes.NewBuffer(data)
 
 	for {
@@ -189,7 +236,7 @@ func (r *RadiusServer) parseAttributes(data []byte, requestAuthenticator [16]byt
 			value = r.decryptPassword(value, requestAuthenticator)
 		}
 
-		attr := RadiusAttribute{
+		attr := RadiusRawAttribute{
 			TypeValue: attr_type,
 			Length:    length,
 			Value:     value,
@@ -202,6 +249,8 @@ func (r *RadiusServer) parseAttributes(data []byte, requestAuthenticator [16]byt
 }
 
 func (r *RadiusServer) decryptPassword(value []byte, requestAuthenticator [16]byte) []byte {
+
+	// TODO: Allow passwords longer than 16 characters...
 
 	var bufr [16]byte
 
@@ -217,5 +266,7 @@ func (r *RadiusServer) decryptPassword(value []byte, requestAuthenticator [16]by
 		bufr[i] = b[i] ^ p
 	}
 
-	return bufr[0:16]
+	s := bufr[:strings.Index(string(bufr[0:16]), "\x00")]
+
+	return s
 }
