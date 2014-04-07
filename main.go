@@ -17,6 +17,10 @@ const (
 	authenticatorLength = 16
 )
 
+type RadiusServer struct {
+	Secret string
+}
+
 type RadiusAttribute struct {
 	TypeValue uint8
 	Length    uint8
@@ -35,10 +39,9 @@ type RadiusPacket struct {
 	Attributes []RadiusAttribute
 }
 
-func main() {
+func (r *RadiusServer) ListenAndServe(addr_str string) error {
 
-	log.Printf("Server started")
-	addr, err := net.ResolveUDPAddr("udp", "0.0.0.0:1812")
+	addr, err := net.ResolveUDPAddr("udp", addr_str)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -50,7 +53,7 @@ func main() {
 
 	for {
 
-		e := handleConn(conn)
+		e := r.handleConn(conn)
 		if e != nil {
 			// ignore errors.
 			log.Printf("WARNING: %v", e.Error())
@@ -60,7 +63,16 @@ func main() {
 
 }
 
-func handleConn(conn *net.UDPConn) error {
+func main() {
+
+	log.Printf("Server started")
+	server := RadiusServer{}
+	server.Secret = "secret"
+	log.Fatal(server.ListenAndServe("0.0.0.0:1812"))
+
+}
+
+func (r *RadiusServer) handleConn(conn *net.UDPConn) error {
 
 	bufr := make([]byte, 4096)
 	rawMsgSize, addr, err := conn.ReadFromUDP(bufr)
@@ -73,13 +85,13 @@ func handleConn(conn *net.UDPConn) error {
 	}
 
 	rawMsg := bufr[0:rawMsgSize]
-	radiusPacket, err := parseRADIUSPacket(rawMsg)
+	radiusPacket, err := r.parseRADIUSPacket(rawMsg)
 
 	responsePacket := RadiusPacket{}
 	responsePacket.RadiusHeader = radiusPacket.RadiusHeader
 	responsePacket.Code = 2
 
-	output, err := encodeRadiusPacket(&responsePacket, "secret")
+	output, err := r.encodeRadiusPacket(&responsePacket, "secret")
 	if err != nil {
 		return err
 	}
@@ -97,7 +109,7 @@ func handleConn(conn *net.UDPConn) error {
 	return nil
 }
 
-func encodeRadiusPacket(packet *RadiusPacket, secret string) ([]byte, error) {
+func (r *RadiusServer) encodeRadiusPacket(packet *RadiusPacket, secret string) ([]byte, error) {
 
 	newBuf := bytes.NewBuffer([]byte{})
 	// TODO
@@ -128,7 +140,7 @@ func encodeRadiusPacket(packet *RadiusPacket, secret string) ([]byte, error) {
 
 }
 
-func parseRADIUSPacket(rawMsg []byte) (*RadiusPacket, error) {
+func (r *RadiusServer) parseRADIUSPacket(rawMsg []byte) (*RadiusPacket, error) {
 
 	packet := RadiusPacket{}
 	reader := bytes.NewReader(rawMsg)
@@ -139,13 +151,13 @@ func parseRADIUSPacket(rawMsg []byte) (*RadiusPacket, error) {
 	}
 
 	rawAttributes := rawMsg[headerEnd:]
-	packet.Attributes = parseAttributes(rawAttributes)
+	packet.Attributes = r.parseAttributes(rawAttributes, packet.Authenticator)
 
 	return &packet, nil
 
 }
 
-func parseAttributes(data []byte) []RadiusAttribute {
+func (r *RadiusServer) parseAttributes(data []byte, requestAuthenticator [16]byte) []RadiusAttribute {
 
 	var attrs []RadiusAttribute
 	reader := bytes.NewBuffer(data)
@@ -172,7 +184,10 @@ func parseAttributes(data []byte) []RadiusAttribute {
 			break
 		}
 
-		// TODO: If there is a password we should decrypt it
+		// If there is a password we should decrypt it
+		if attr_type == 2 {
+			value = r.decryptPassword(value, requestAuthenticator)
+		}
 
 		attr := RadiusAttribute{
 			TypeValue: attr_type,
@@ -184,4 +199,23 @@ func parseAttributes(data []byte) []RadiusAttribute {
 	}
 
 	return attrs
+}
+
+func (r *RadiusServer) decryptPassword(value []byte, requestAuthenticator [16]byte) []byte {
+
+	var bufr [16]byte
+
+	S := []byte(r.Secret)
+	c := requestAuthenticator[0:16]
+
+	_b := md5.New()
+	_b.Write(S)
+	_b.Write(c)
+	b := _b.Sum(nil)
+
+	for i, p := range value {
+		bufr[i] = b[i] ^ p
+	}
+
+	return bufr[0:16]
 }
