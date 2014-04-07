@@ -100,13 +100,13 @@ func handleConn(conn *net.UDPConn) error {
 func encodeRadiusPacket(packet *RadiusPacket, secret string) ([]byte, error) {
 
 	newBuf := bytes.NewBuffer([]byte{})
-	binary.Write(newBuf, binary.BigEndian, &packet.RadiusHeader)
-
 	// TODO
 	// This is a dumb implementation.
 	// Radius Attributes need to be added :)
 	// and packet length re-calculated.
-	responsePacket.Length = 20
+	packet.Length = 20
+
+	binary.Write(newBuf, binary.BigEndian, &packet.RadiusHeader)
 
 	output := newBuf.Bytes()
 
