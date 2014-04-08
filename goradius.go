@@ -49,24 +49,25 @@ type RadiusHeader struct {
 
 type RadiusPacket struct {
 	RadiusHeader
-	// Attributes []RadiusRawAttribute
-	Attributes map[string][]byte
+	Attributes map[string]interface{}
 }
 
 func NewRadiusPacket() *RadiusPacket {
 	var p RadiusPacket
-	p.Attributes = make(map[string][]byte)
+	p.Attributes = make(map[string]interface{})
 	return &p
 
 }
 
-func (p *RadiusPacket) AddAttribute(attrType string, value []byte) error {
+func (p *RadiusPacket) AddAttribute(attrType string, value interface{}) error {
 
 	// val := attributes_to_code[attrType]
 	// if val == "" {
 	// 	errStr := fmt.Sprintf("Uknown attribute: %v", attrType)
 	// 	return errors.New(errStr)
 	// }
+
+	// Convert the value to bytes
 
 	p.Attributes[attrType] = value
 	// attr := RadiusRawAttribute{}
@@ -77,7 +78,7 @@ func (p *RadiusPacket) AddAttribute(attrType string, value []byte) error {
 	return nil
 }
 
-func (p *RadiusPacket) GetAttribute(attrType string) []byte {
+func (p *RadiusPacket) GetAttribute(attrType string) interface{} {
 	return p.Attributes[attrType]
 }
 
@@ -102,7 +103,7 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 
 	r.handler(requestPacket, responsePacket)
 
-	output, err := r.encodeRadiusPacket(responsePacket, "secret")
+	output, err := r.encodeRadiusPacket(responsePacket, r.Secret)
 	if err != nil {
 		return err
 	}
@@ -147,47 +148,61 @@ func (r *RadiusServer) ListenAndServe(addr_str string) error {
 
 }
 
+func checkErr(msg string, err error) {
+	if err != nil {
+		log.Printf("%v %v", msg, err.Error())
+	}
+}
+
 func (r *RadiusServer) encodeRadiusPacket(packet *RadiusPacket, secret string) ([]byte, error) {
 
 	newBuf := bytes.NewBuffer([]byte{})
 	binary.Write(newBuf, binary.BigEndian, &packet.RadiusHeader)
 
-	//
+	// Write in all the attributes
 	for attrName, attrValue := range packet.Attributes {
 		rawAttr := RadiusRawAttribute{}
 
 		rawAttr.TypeValue = attributes_to_code[attrName]
-		rawAttr.Value = attrValue
-		rawAttr.Length = uint8(len(attrValue) + 2) // we add the type and length
-
-		// err := binary.Write(newBuf, binary.BigEndian, &rawAttr) // why is this not working?
+		if rawAttr.TypeValue == 26 {
+			// TODO: handle vendor specific
+			rawAttr.TypeValue = 26
+		}
 
 		err := binary.Write(newBuf, binary.BigEndian, &rawAttr.TypeValue)
 		if err != nil {
+			log.Printf("Failed to write!")
 			return nil, err
 		}
 
-		err = binary.Write(newBuf, binary.BigEndian, &rawAttr.Length)
-		if err != nil {
-			return nil, err
+		// Dirty. I don't know how I feel about this.
+		switch t := attrValue.(type) {
+		default:
+			log.Printf("unexpected type %T", t)
+		case uint32:
+			rawAttr.Length = 4 + 2
+			err = binary.Write(newBuf, binary.BigEndian, &rawAttr.Length)
+			checkErr("err 1", err)
+			err = binary.Write(newBuf, binary.BigEndian, t)
+			checkErr("err 2", err)
+		case []byte:
+			rawAttr.Length = uint8(len(t)) + 2
+			err = binary.Write(newBuf, binary.BigEndian, &rawAttr.Length)
+			checkErr("err 3", err)
+			err = binary.Write(newBuf, binary.BigEndian, t)
+			checkErr("err 4", err)
 		}
-
-		err = binary.Write(newBuf, binary.BigEndian, &rawAttr.Value)
-		if err != nil {
-			return nil, err
-		}
-
 	}
-	//
 
 	output := newBuf.Bytes()
+
+	// Now that we have written all the attributes
+	// we know the size and we can override it.
 	currentSize := len(output)
 	var h, l uint8 = uint8(uint16(currentSize) >> 8), uint8(uint16(currentSize) & 0xff)
-
 	packet.Length = uint16(currentSize)
 	output[2] = h
 	output[3] = l
-	// Modify the data
 
 	// Calculate the md5 with the previous authenticator
 	// and the current secret.
@@ -292,7 +307,10 @@ func (r *RadiusServer) decryptPassword(value []byte, requestAuthenticator [16]by
 		bufr[i] = b[i] ^ p
 	}
 
-	s := bufr[:strings.Index(string(bufr[0:16]), "\x00")]
-
-	return s
+	idx := strings.Index(string(bufr[0:16]), "\x00")
+	ret := bufr[0:16]
+	if idx > 0 {
+		ret = bufr[:idx]
+	}
+	return ret
 }
