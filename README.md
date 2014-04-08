@@ -3,8 +3,10 @@
 A simple implementation of a RADIUS server in go.
 
 ### TODO
-Handle vendor specific attributes
-Handle passwords > 16 chars
+* Handle vendor specific attributes
+* Handle passwords > 16 chars
+
+### Example
 
 ```go
 package main
