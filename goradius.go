@@ -19,8 +19,8 @@ const (
 type RadiusServer struct {
 	Secret string
 	conn   *net.UDPConn
-	// still debating  how we want to handle the policy...
-	// do we have one handler and let the user deal with
+	// still debating  how we want to handle the policy flow...
+	// do we have one handler and let the programmer deal with
 	// the flow, or
 	// do we do it middleware style were we jump from one
 	// function to the next...
@@ -154,11 +154,50 @@ func (r *RadiusServer) encodeRadiusPacket(packet *RadiusPacket, secret string) (
 	// This is a dumb implementation.
 	// Radius Attributes need to be added :)
 	// and packet length re-calculated.
-	packet.Length = 20
+
+	currentSize := 20
 
 	binary.Write(newBuf, binary.BigEndian, &packet.RadiusHeader)
 
+	//
+	for attrName, attrValue := range packet.Attributes {
+		rawAttr := RadiusRawAttribute{}
+
+		// log.Printf("%v %v", attrName, attrValue)
+
+		rawAttr.TypeValue = attributes_to_code[attrName]
+		rawAttr.Value = attrValue
+		rawAttr.Length = uint8(len(attrValue) + 2) // we add the type and length
+
+		// err := binary.Write(newBuf, binary.BigEndian, &rawAttr) // why is this not working?
+
+		err := binary.Write(newBuf, binary.BigEndian, &rawAttr.TypeValue)
+		if err != nil {
+			return nil, err
+		}
+
+		err = binary.Write(newBuf, binary.BigEndian, &rawAttr.Length)
+		if err != nil {
+			return nil, err
+		}
+
+		err = binary.Write(newBuf, binary.BigEndian, &rawAttr.Value)
+		if err != nil {
+			return nil, err
+		}
+
+		currentSize += len(attrValue) + 2
+
+	}
+	//
+
 	output := newBuf.Bytes()
+	var h, l uint8 = uint8(uint16(currentSize) >> 8), uint8(uint16(currentSize) & 0xff)
+
+	packet.Length = uint16(currentSize)
+	output[2] = h
+	output[3] = l
+	// Modify the data
 
 	// Calculate the md5 with the previous authenticator
 	// and the current secret.
@@ -196,8 +235,6 @@ func (r *RadiusServer) parseRADIUSPacket(rawMsg []byte) (*RadiusPacket, error) {
 		name := code_to_attributes[attr.TypeValue]
 		packet.AddAttribute(name, attr.Value)
 	}
-
-	// TODO convert rawAttributes to readable attrs
 
 	return packet, nil
 
