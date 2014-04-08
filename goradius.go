@@ -18,6 +18,7 @@ const (
 
 type RadiusServer struct {
 	Secret string
+	conn   *net.UDPConn
 	// still debating  how we want to handle the policy...
 	// do we have one handler and let the user deal with
 	// the flow, or
@@ -80,19 +81,14 @@ func (p *RadiusPacket) GetAttribute(attrType string) []byte {
 	return p.Attributes[attrType]
 }
 
-func (r *RadiusServer) handleConn(conn *net.UDPConn) error {
-
-	bufr := make([]byte, 4096)
-	rawMsgSize, addr, err := conn.ReadFromUDP(bufr)
-	if err != nil {
-		panic(err)
-	}
+func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte) error {
 
 	if rawMsgSize < 20 {
 		return errors.New("Message to short.")
 	}
 
-	rawMsg := bufr[0:rawMsgSize]
+	rawMsg := data[0:rawMsgSize]
+
 	requestPacket, err := r.parseRADIUSPacket(rawMsg)
 
 	responsePacket := NewRadiusPacket()
@@ -111,7 +107,7 @@ func (r *RadiusServer) handleConn(conn *net.UDPConn) error {
 		return err
 	}
 
-	bytesWritten, err := conn.WriteToUDP(output, addr)
+	bytesWritten, err := r.conn.WriteToUDP(output, addr)
 	if bytesWritten != int(responsePacket.Length) {
 		log.Printf("WARNING: Written bytes in UDP socket did not match packet size. Packet: %v Written: %v",
 			responsePacket.Length, bytesWritten)
@@ -135,14 +131,17 @@ func (r *RadiusServer) ListenAndServe(addr_str string) error {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	r.conn = conn
 
 	for {
 
-		e := r.handleConn(conn)
-		if e != nil {
-			// ignore errors.
-			log.Printf("WARNING: %v", e.Error())
+		bufr := make([]byte, 4096)
+		rawMsgSize, addr, err := conn.ReadFromUDP(bufr)
+		if err != nil {
+			panic(err)
 		}
+
+		go r.handleConn(rawMsgSize, addr, bufr)
 
 	}
 
