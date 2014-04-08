@@ -150,20 +150,11 @@ func (r *RadiusServer) ListenAndServe(addr_str string) error {
 func (r *RadiusServer) encodeRadiusPacket(packet *RadiusPacket, secret string) ([]byte, error) {
 
 	newBuf := bytes.NewBuffer([]byte{})
-	// TODO
-	// This is a dumb implementation.
-	// Radius Attributes need to be added :)
-	// and packet length re-calculated.
-
-	currentSize := 20
-
 	binary.Write(newBuf, binary.BigEndian, &packet.RadiusHeader)
 
 	//
 	for attrName, attrValue := range packet.Attributes {
 		rawAttr := RadiusRawAttribute{}
-
-		// log.Printf("%v %v", attrName, attrValue)
 
 		rawAttr.TypeValue = attributes_to_code[attrName]
 		rawAttr.Value = attrValue
@@ -186,12 +177,11 @@ func (r *RadiusServer) encodeRadiusPacket(packet *RadiusPacket, secret string) (
 			return nil, err
 		}
 
-		currentSize += len(attrValue) + 2
-
 	}
 	//
 
 	output := newBuf.Bytes()
+	currentSize := len(output)
 	var h, l uint8 = uint8(uint16(currentSize) >> 8), uint8(uint16(currentSize) & 0xff)
 
 	packet.Length = uint16(currentSize)
