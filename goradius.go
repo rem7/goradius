@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/binary"
-	"errors"
 	"io"
 	"log"
 	"net"
@@ -34,58 +33,10 @@ func (r *RadiusServer) Handler(f func(*RadiusPacket, *RadiusPacket) error) {
 
 }
 
-type RadiusRawAttribute struct {
-	TypeValue uint8
-	Length    uint8
-	Value     []byte
-}
-
-type RadiusHeader struct {
-	Code          uint8
-	Identifier    uint8
-	Length        uint16
-	Authenticator [authenticatorLength]byte
-}
-
-type RadiusPacket struct {
-	RadiusHeader
-	Attributes map[string]interface{}
-}
-
-func NewRadiusPacket() *RadiusPacket {
-	var p RadiusPacket
-	p.Attributes = make(map[string]interface{})
-	return &p
-
-}
-
-func (p *RadiusPacket) AddAttribute(attrType string, value interface{}) error {
-
-	// val := attributes_to_code[attrType]
-	// if val == "" {
-	// 	errStr := fmt.Sprintf("Uknown attribute: %v", attrType)
-	// 	return errors.New(errStr)
-	// }
-
-	// Convert the value to bytes
-
-	p.Attributes[attrType] = value
-	// attr := RadiusRawAttribute{}
-	// attr.TypeValue = attrType
-	// attr.Length = len(value)
-	// attr.Value = value
-
-	return nil
-}
-
-func (p *RadiusPacket) GetAttribute(attrType string) interface{} {
-	return p.Attributes[attrType]
-}
-
-func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte) error {
+func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte) {
 
 	if rawMsgSize < 20 {
-		return errors.New("Message to short.")
+		return // errors.New("Message to short.")
 	}
 
 	rawMsg := data[0:rawMsgSize]
@@ -98,14 +49,20 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 	// for _, m := range r.middleware {
 	// 	e := m(requestPacket, responsePacket)
 	// 	if e != nil {
+	// return
 	// 	}
 	// }
 
-	r.handler(requestPacket, responsePacket)
+	err = r.handler(requestPacket, responsePacket)
+
+	// silent errors
+	if err != nil {
+		return // err
+	}
 
 	output, err := r.encodeRadiusPacket(responsePacket, r.Secret)
 	if err != nil {
-		return err
+		return // err
 	}
 
 	bytesWritten, err := r.conn.WriteToUDP(output, addr)
@@ -115,13 +72,15 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 	}
 
 	if err != nil {
-		return err
+		return // err
 	}
 
-	return nil
+	return // nil
 }
 
-func (r *RadiusServer) ListenAndServe(addr_str string) error {
+func (r *RadiusServer) ListenAndServe(addr_str, secret string) error {
+
+	r.Secret = secret
 
 	addr, err := net.ResolveUDPAddr("udp", addr_str)
 	if err != nil {
