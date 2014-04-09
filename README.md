@@ -1,6 +1,6 @@
 
 # goradius
-A simple implementation of a RADIUS server in go.
+A simple implementation of a RADIUS server in go. The policy flow is modeled HTTP-like, through the use of middleware in a request/response flow. Look at sample
 
 ### TODO
 * Handle vendor specific attributes
@@ -17,7 +17,21 @@ import (
     "log"
 )
 
-// // echo "User-Name=steve,User-Password=testing" | radclient -sx 127.0.0.1:1812 auth secret
+// echo "User-Name=steve,User-Password=testing" | radclient -sx 127.0.0.1:1812 auth secret
+
+func main() {
+
+    log.Printf("Server started")
+    server := goradius.RadiusServer{}
+
+    // server.Handler(passwordCheck)
+
+    // Create policy flow as middleware
+    server.Use(passwordCheck)
+    server.Use(addAttributes)
+    server.ListenAndServe("0.0.0.0:1812", "s3cr37")
+
+}
 
 func passwordCheck(req, res *goradius.RadiusPacket) error {
 
@@ -30,10 +44,6 @@ func passwordCheck(req, res *goradius.RadiusPacket) error {
     if bytes.Equal(passwordData, []byte("testing")) &&
         bytes.Equal(usernameData, []byte("steve")) {
         res.Code = 2
-
-        res.AddAttribute("NAS-Identifier", []byte("rem7"))
-        res.AddAttribute("Idle-Timeout", uint32(600))
-        res.AddAttribute("Session-Timeout", uint32(10800))
     } else {
         res.Code = 3
     }
@@ -42,13 +52,15 @@ func passwordCheck(req, res *goradius.RadiusPacket) error {
 
 }
 
-func main() {
+func addAttributes(req, res *goradius.RadiusPacket) error {
 
-    log.Printf("Server started")
-    server := goradius.RadiusServer{}
-    server.Secret = "s3cr37"
-    server.Handler(passwordCheck)
-    log.Fatal(server.ListenAndServe("0.0.0.0:1812"))
+    if res.Code == 2 {
+        res.AddAttribute("NAS-Identifier", []byte("rem7"))
+        res.AddAttribute("Idle-Timeout", uint32(600))
+        res.AddAttribute("Session-Timeout", uint32(10800))
+    }
 
+    return nil
 }
+
 ```
