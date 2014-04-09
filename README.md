@@ -17,7 +17,7 @@ import (
     "log"
 )
 
-// echo "User-Name=steve,User-Password=testing" | radclient -sx 127.0.0.1:1812 auth secret
+// echo "User-Name=steve,User-Password=testing" | radclient -sx 127.0.0.1:1812 auth s3cr37
 
 func main() {
 

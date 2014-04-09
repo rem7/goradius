@@ -1,6 +1,15 @@
 package goradius
 
 var (
+	AccessRequest      = uint8(1)
+	AccessAccept       = uint8(2)
+	AccessReject       = uint8(3)
+	AccountingRequest  = uint8(4)
+	AccountingResponse = uint8(5)
+	AccessChallenge    = uint8(11)
+	StatusServer       = uint8(12)
+	StatusClient       = uint8(13)
+
 	UserName               = 1
 	UserPassword           = 2
 	CHAPPassword           = 3
