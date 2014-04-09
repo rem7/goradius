@@ -17,7 +17,6 @@ const (
 
 type RadiusServer struct {
 	Secret string
-	conn   *net.UDPConn
 	// still debating  how we want to handle the policy flow...
 	// do we have one handler and let the programmer deal with
 	// the flow, or
@@ -25,57 +24,13 @@ type RadiusServer struct {
 	// function to the next...
 	handler    func(req *RadiusPacket, res *RadiusPacket) error // option 1
 	middleware []func(*RadiusPacket, *RadiusPacket) error       // option 2
+	conn       *net.UDPConn
 }
 
-func (r *RadiusServer) Handler(f func(*RadiusPacket, *RadiusPacket) error) {
+func (r *RadiusServer) Use(f func(*RadiusPacket, *RadiusPacket) error) {
 
-	r.handler = f
+	r.middleware = append(r.middleware, f)
 
-}
-
-func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte) {
-
-	if rawMsgSize < 20 {
-		return // errors.New("Message to short.")
-	}
-
-	rawMsg := data[0:rawMsgSize]
-
-	requestPacket, err := r.parseRADIUSPacket(rawMsg)
-
-	responsePacket := NewRadiusPacket()
-	responsePacket.RadiusHeader = requestPacket.RadiusHeader
-
-	// for _, m := range r.middleware {
-	// 	e := m(requestPacket, responsePacket)
-	// 	if e != nil {
-	// return
-	// 	}
-	// }
-
-	err = r.handler(requestPacket, responsePacket)
-
-	// silent errors
-	if err != nil {
-		return // err
-	}
-
-	output, err := r.encodeRadiusPacket(responsePacket, r.Secret)
-	if err != nil {
-		return // err
-	}
-
-	bytesWritten, err := r.conn.WriteToUDP(output, addr)
-	if bytesWritten != int(responsePacket.Length) {
-		log.Printf("WARNING: Written bytes in UDP socket did not match packet size. Packet: %v Written: %v",
-			responsePacket.Length, bytesWritten)
-	}
-
-	if err != nil {
-		return // err
-	}
-
-	return // nil
 }
 
 func (r *RadiusServer) ListenAndServe(addr_str, secret string) error {
@@ -105,6 +60,60 @@ func (r *RadiusServer) ListenAndServe(addr_str, secret string) error {
 
 	}
 
+}
+
+func (r *RadiusServer) Handler(f func(*RadiusPacket, *RadiusPacket) error) {
+
+	r.handler = f
+
+}
+
+func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte) {
+
+	if rawMsgSize < 20 {
+		return // errors.New("Message to short.")
+	}
+
+	rawMsg := data[0:rawMsgSize]
+
+	requestPacket, err := r.parseRADIUSPacket(rawMsg)
+
+	responsePacket := NewRadiusPacket()
+	responsePacket.RadiusHeader = requestPacket.RadiusHeader
+
+	for _, m := range r.middleware {
+		e := m(requestPacket, responsePacket)
+
+		// silently drop package if we get an error.
+		if e != nil {
+			return
+		}
+	}
+
+	// err = r.handler(requestPacket, responsePacket)
+	// // silent errors until we decide how to handle them
+	// if err != nil {
+	// 	return // err
+	// }
+
+	// sometimes we want to silently drop packets
+	// so this should be moved out of here.
+	output, err := r.encodeRadiusPacket(responsePacket, r.Secret)
+	if err != nil {
+		return // err
+	}
+
+	bytesWritten, err := r.conn.WriteToUDP(output, addr)
+	if bytesWritten != int(responsePacket.Length) {
+		log.Printf("WARNING: Written bytes in UDP socket did not match packet size. Packet: %v Written: %v",
+			responsePacket.Length, bytesWritten)
+	}
+
+	if err != nil {
+		return // err
+	}
+
+	return // nil
 }
 
 func checkErr(msg string, err error) {
