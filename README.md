@@ -1,6 +1,6 @@
 
 # goradius
-A simple implementation of a RADIUS server in go. The policy flow is modeled HTTP-like, through the use of middleware in a request/response flow. Look at sample
+A simple implementation of a RADIUS server in go. The policy flow is modeled HTTP-like, through the use of middleware in a request/response flow. Look at example below
 
 ### TODO
 * Handle vendor specific attributes
@@ -17,7 +17,7 @@ import (
     "log"
 )
 
-// echo "User-Name=steve,User-Password=testing" | radclient -sx 127.0.0.1:1812 auth s3cr37
+// echo "User-Name=steve,User-Password=testing" | radclient -sx 127.0.0.1:1812 auth secret
 
 func main() {
 
@@ -26,7 +26,7 @@ func main() {
 
     // server.Handler(passwordCheck)
 
-    // Create policy flow as middleware
+    // Add middleware
     server.Use(passwordCheck)
     server.Use(addAttributes)
     server.ListenAndServe("0.0.0.0:1812", "s3cr37")
@@ -43,9 +43,9 @@ func passwordCheck(req, res *goradius.RadiusPacket) error {
 
     if bytes.Equal(passwordData, []byte("testing")) &&
         bytes.Equal(usernameData, []byte("steve")) {
-        res.Code = 2
+        res.Code = goradius.AccessAccept
     } else {
-        res.Code = 3
+        res.Code = goradius.AccessReject
     }
 
     return nil
@@ -54,7 +54,7 @@ func passwordCheck(req, res *goradius.RadiusPacket) error {
 
 func addAttributes(req, res *goradius.RadiusPacket) error {
 
-    if res.Code == 2 {
+    if res.Code == goradius.AccessAccept {
         res.AddAttribute("NAS-Identifier", []byte("rem7"))
         res.AddAttribute("Idle-Timeout", uint32(600))
         res.AddAttribute("Session-Timeout", uint32(10800))
