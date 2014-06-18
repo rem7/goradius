@@ -56,7 +56,7 @@ func (r *RadiusServer) ListenAndServe(addr_str, secret string) error {
 			panic(err)
 		}
 
-		go r.handleConn(rawMsgSize, addr, bufr)
+		r.handleConn(rawMsgSize, addr, bufr)
 
 	}
 
