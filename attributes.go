@@ -47,6 +47,18 @@ var (
 	FramedAppleTalkLink    = 37
 	FramedAppleTalkNetwork = 38
 	FramedAppleTalkZone    = 39
+	AcctStatusType         = 40
+	AcctDelayTime          = 41
+	AcctInputOctets        = 42
+	AcctOutputOctets       = 43
+	AcctSessionId          = 44
+	AcctAuthentic          = 45
+	AcctSessionTime        = 46
+	AcctInputPackets       = 47
+	AcctOutputPackets      = 48
+	AcctTerminateCause     = 49
+	AcctMultiSessionId     = 50
+	AcctLinkCount          = 51
 	CHAPChallenge          = 60
 	NASPortType            = 61
 	PortLimit              = 62
@@ -90,6 +102,18 @@ var (
 		37: "Framed-AppleTalk-Link",
 		38: "Framed-AppleTalk-Network",
 		39: "Framed-AppleTalk-Zone",
+		40: "Acct-Status-Type",
+		41: "Acct-Delay-Time",
+		42: "Acct-Input-Octets",
+		43: "Acct-Output-Octets",
+		44: "Acct-Session-Id",
+		45: "Acct-Authentic",
+		46: "Acct-Session-Time",
+		47: "Acct-Input-Packets",
+		48: "Acct-Output-Packets",
+		49: "Acct-Terminate-Cause",
+		50: "Acct-Multi-Session-Id",
+		51: "Acct-Link-Count",
 		60: "CHAP-Challenge",
 		61: "NAS-Port-Type",
 		62: "Port-Limit",
@@ -134,6 +158,18 @@ var (
 		"Framed-AppleTalk-Link":    37,
 		"Framed-AppleTalk-Network": 38,
 		"Framed-AppleTalk-Zone":    39,
+		"Acct-Status-Type":         40,
+		"Acct-Delay-Time":          41,
+		"Acct-Input-Octets":        42,
+		"Acct-Output-Octets":       43,
+		"Acct-Session-Id":          44,
+		"Acct-Authentic":           45,
+		"Acct-Session-Time":        46,
+		"Acct-Input-Packets":       47,
+		"Acct-Output-Packets":      48,
+		"Acct-Terminate-Cause":     49,
+		"Acct-Multi-Session-Id":    50,
+		"Acct-Link-Count":          51,
 		"CHAP-Challenge":           60,
 		"NAS-Port-Type":            61,
 		"Port-Limit":               62,
