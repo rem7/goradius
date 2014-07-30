@@ -10,6 +10,8 @@ const (
 	authenticatorLength = 16
 )
 
+type RADIUSMiddleware func(*RadiusServer, *RadiusPacket, *RadiusPacket) (bool, bool)
+
 type RadiusServer struct {
 	Secret string
 	// still debating  how we want to handle the policy flow...
@@ -17,15 +19,32 @@ type RadiusServer struct {
 	// the flow, or
 	// do we do it middleware style were we jump from one
 	// function to the next...
-	handler    func(req *RadiusPacket, res *RadiusPacket) error // option 1
-	middleware []func(*RadiusPacket, *RadiusPacket) error       // option 2
+	handler    func(*RadiusPacket, *RadiusPacket) (bool, bool)   // option 1
+	middleware []func(*RadiusPacket, *RadiusPacket) (bool, bool) // option 2
 	conn       *net.UDPConn
+	Sessions   map[string]bool
+	Routes     map[uint8][]RADIUSMiddleware // option 3
+	OnDrop     func(*RadiusServer, *RadiusPacket, *RadiusPacket)
+	OnReply    func(*RadiusServer, *RadiusPacket, *RadiusPacket)
+	Mode       rune
 }
 
-func (r *RadiusServer) Use(f func(*RadiusPacket, *RadiusPacket) error) {
+// func(req, res) (next, drop)
+
+func (r *RadiusServer) Use(f func(*RadiusPacket, *RadiusPacket) (next, drop bool)) {
 
 	r.middleware = append(r.middleware, f)
 
+}
+
+func NewRadiusServer(mode rune) *RadiusServer {
+
+	r := RadiusServer{}
+	r.Mode = mode
+	r.Sessions = make(map[string]bool)
+	r.Routes = make(map[uint8][]RADIUSMiddleware)
+
+	return &r
 }
 
 func (r *RadiusServer) ListenAndServe(addr_str, secret string) error {
@@ -51,16 +70,39 @@ func (r *RadiusServer) ListenAndServe(addr_str, secret string) error {
 			panic(err)
 		}
 
-		r.handleConn(rawMsgSize, addr, bufr)
+		go r.handleConn(rawMsgSize, addr, bufr)
 
 	}
 
 }
 
-func (r *RadiusServer) Handler(f func(*RadiusPacket, *RadiusPacket) error) {
+func (r *RadiusServer) Handler(f func(*RadiusPacket, *RadiusPacket) (bool, bool)) {
 
 	r.handler = f
 
+}
+
+func (r *RadiusServer) handleMiddleware(mid []RADIUSMiddleware, req, res *RadiusPacket) bool {
+
+	for _, m := range mid {
+
+		next, drop := m(r, req, res)
+
+		if drop {
+			return true
+		}
+
+		if next {
+			continue
+		}
+
+		if next == false && drop == false {
+			break
+		}
+
+	}
+
+	return false
 }
 
 func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte) {
@@ -72,24 +114,32 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 	rawMsg := data[0:rawMsgSize]
 
 	requestPacket, err := ParseRADIUSPacket(rawMsg, r.Secret)
+	requestPacket.Addr = addr
 
 	responsePacket := NewRadiusPacket()
 	responsePacket.RadiusHeader = requestPacket.RadiusHeader
 
-	for _, m := range r.middleware {
-		e := m(requestPacket, responsePacket)
+	drop := true
 
-		// silently drop package if we get an error.
-		if e != nil {
-			return
-		}
+	if requestPacket.Code == StatusServer {
+		drop = r.handleMiddleware(r.Routes[requestPacket.Code], requestPacket, responsePacket)
 	}
 
-	// err = r.handler(requestPacket, responsePacket)
-	// // silent errors until we decide how to handle them
-	// if err != nil {
-	// 	return // err
+	if requestPacket.Code == AccessRequest {
+		drop = r.handleMiddleware(r.Routes[requestPacket.Code], requestPacket, responsePacket)
+	}
+
+	// _, drop := r.handler(requestPacket, responsePacket)
+	// if drop {
+	// 	return
 	// }
+
+	if drop {
+		if r.OnDrop != nil {
+			r.OnDrop(r, requestPacket, nil)
+		}
+		return
+	}
 
 	// sometimes we want to silently drop packets
 	// so this should be moved out of here.
@@ -98,7 +148,11 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 		log.Fatal(err)
 	}
 
-	return // nil
+	if r.OnReply != nil {
+		r.OnReply(r, requestPacket, responsePacket)
+	}
+
+	return
 }
 
 func SendRADIUSPacket(conn *net.UDPConn, addr *net.UDPAddr, responsePacket *RadiusPacket, secret string, recalculateAuthenticator bool) error {

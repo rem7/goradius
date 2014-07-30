@@ -1,5 +1,10 @@
 package goradius
 
+const (
+	AUTH = iota
+	ACCT
+)
+
 var (
 	AccessRequest      = uint8(1)
 	AccessAccept       = uint8(2)

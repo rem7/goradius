@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"strings"
 )
 
@@ -26,6 +27,7 @@ type RadiusHeader struct {
 type RadiusPacket struct {
 	RadiusHeader
 	Attributes map[string]interface{}
+	Addr       *net.UDPAddr
 }
 
 func NewRadiusPacket() *RadiusPacket {
