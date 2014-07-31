@@ -57,6 +57,7 @@ func (r *RadiusServer) ListenAndServe(addr_str, secret string) error {
 	}
 
 	conn, err := net.ListenUDP("udp", addr)
+	conn.SetReadBuffer(1048576)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -120,13 +121,35 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 	responsePacket.RadiusHeader = requestPacket.RadiusHeader
 
 	drop := true
+	routeMatched := false
+
+	var policyFlow []RADIUSMiddleware
+	ok := false
 
 	if requestPacket.Code == StatusServer {
-		drop = r.handleMiddleware(r.Routes[requestPacket.Code], requestPacket, responsePacket)
+		if policyFlow, ok = r.Routes[StatusServer]; ok {
+			routeMatched = true
+		}
 	}
 
 	if requestPacket.Code == AccessRequest {
-		drop = r.handleMiddleware(r.Routes[requestPacket.Code], requestPacket, responsePacket)
+		if policyFlow, ok = r.Routes[AccessRequest]; ok {
+			routeMatched = true
+		}
+	}
+
+	if requestPacket.Code == AccountingRequest {
+		if policyFlow, ok = r.Routes[AccountingRequest]; ok {
+			routeMatched = true
+		}
+	}
+
+	if routeMatched {
+		drop = r.handleMiddleware(policyFlow, requestPacket, responsePacket)
+	} else {
+		log.Printf("routeMatched %v. Did not find route for packet\n%+v", routeMatched, requestPacket)
+		log.Printf("Dropping packet. Server mode: %v", r.Mode)
+		return
 	}
 
 	// _, drop := r.handler(requestPacket, responsePacket)

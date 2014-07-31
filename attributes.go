@@ -5,6 +5,14 @@ const (
 	ACCT
 )
 
+const (
+	AcctStart     = 1
+	AcctStop      = 2
+	InterimUpdate = 3
+	AccountingOn  = 7
+	AccountingOff = 8
+)
+
 var (
 	AccessRequest      = uint8(1)
 	AccessAccept       = uint8(2)

@@ -70,11 +70,15 @@ func EncodeRADIUSPacket(packet *RadiusPacket, secret string, recalculateAuthenti
 	for attrName, attrValue := range packet.Attributes {
 		rawAttr := RadiusRawAttribute{}
 
+		if attrName == "" {
+			continue
+		}
+
 		if attrCode, ok := attributes_to_code[attrName]; ok {
 			rawAttr.TypeValue = attrCode
 		} else {
-
-			log.Fatalf("Attributed not supported: %v", attrName)
+			log.Printf("attribute not supported: %v", attrName)
+			continue
 		}
 
 		if rawAttr.TypeValue == 26 {
@@ -187,6 +191,7 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 		value := reader.Next(int(length) - 2)
 
 		if attr_type == 0 {
+			log.Printf("attr_type == 0?")
 			break
 		}
 
