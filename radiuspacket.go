@@ -26,18 +26,18 @@ type RadiusHeader struct {
 
 type RadiusPacket struct {
 	RadiusHeader
-	Attributes map[string]interface{}
+	Attributes map[string][]byte
 	Addr       *net.UDPAddr
 }
 
 func NewRadiusPacket() *RadiusPacket {
 	var p RadiusPacket
-	p.Attributes = make(map[string]interface{})
+	p.Attributes = make(map[string][]byte)
 	return &p
 
 }
 
-func (p *RadiusPacket) AddAttribute(attrType string, value interface{}) error {
+func (p *RadiusPacket) AddAttribute(attrType string, value []byte) error {
 
 	p.Attributes[attrType] = value
 
@@ -55,7 +55,7 @@ func (r *RadiusPacket) GenerateId() {
 	r.RadiusHeader.Identifier = uint8(rand.Int() % 256)
 }
 
-func (p *RadiusPacket) GetAttribute(attrType string) interface{} {
+func (p *RadiusPacket) GetAttribute(attrType string) []byte {
 
 	return p.Attributes[attrType]
 
@@ -93,22 +93,11 @@ func EncodeRADIUSPacket(packet *RadiusPacket, secret string, recalculateAuthenti
 		}
 
 		// Dirty. I don't know how I feel about this.
-		switch t := attrValue.(type) {
-		default:
-			log.Printf("unexpected type %T", t)
-		case uint32:
-			rawAttr.Length = 4 + 2
-			err = binary.Write(newBuf, binary.BigEndian, &rawAttr.Length)
-			checkErr("err 1", err)
-			err = binary.Write(newBuf, binary.BigEndian, t)
-			checkErr("err 2", err)
-		case []byte:
-			rawAttr.Length = uint8(len(t)) + 2
-			err = binary.Write(newBuf, binary.BigEndian, &rawAttr.Length)
-			checkErr("err 3", err)
-			err = binary.Write(newBuf, binary.BigEndian, t)
-			checkErr("err 4", err)
-		}
+		rawAttrLength := uint8(len(attrValue)) + 2
+		err = binary.Write(newBuf, binary.BigEndian, &rawAttrLength)
+		checkErr("err 1", err)
+		err = binary.Write(newBuf, binary.BigEndian, &attrValue)
+		checkErr("err 2", err)
 	}
 
 	output := newBuf.Bytes()
