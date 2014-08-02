@@ -210,9 +210,3 @@ func SendResponse(conn *net.UDPConn, addr *net.UDPAddr, packet *RadiusPacket, se
 
 	return err
 }
-
-func checkErr(msg string, err error) {
-	if err != nil {
-		log.Printf("%v %v", msg, err.Error())
-	}
-}
