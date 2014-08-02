@@ -1,6 +1,7 @@
 package goradius
 
 import (
+	"crypto/md5"
 	"log"
 	"net"
 )
@@ -166,7 +167,7 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 
 	// sometimes we want to silently drop packets
 	// so this should be moved out of here.
-	err = SendRADIUSPacket(r.conn, addr, responsePacket, r.Secret, true)
+	err = SendResponse(r.conn, addr, responsePacket, r.Secret, true)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -178,17 +179,33 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 	return
 }
 
-func SendRADIUSPacket(conn *net.UDPConn, addr *net.UDPAddr, responsePacket *RadiusPacket, secret string, recalculateAuthenticator bool) error {
+func CalculateResponseAuthenticator(output []byte, secret string) {
+	md5c := md5.New()
+	md5c.Write(output)
+	md5c.Write([]byte(secret))
+	sum := md5c.Sum(nil)
 
-	output, err := EncodeRADIUSPacket(responsePacket, secret, recalculateAuthenticator)
+	// Add the new authenticator data
+	offset := 4
+	for _, bval := range sum {
+		output[offset] = bval
+		offset += 1
+	}
+}
+
+func SendResponse(conn *net.UDPConn, addr *net.UDPAddr, packet *RadiusPacket, secret string, recalculateAuthenticator bool) error {
+
+	output, err := packet.EncodePacket(secret)
 	if err != nil {
 		return err
 	}
 
+	CalculateResponseAuthenticator(output, secret)
+
 	bytesWritten, err := conn.WriteToUDP(output, addr)
-	if bytesWritten != int(responsePacket.Length) {
+	if bytesWritten != int(packet.Length) {
 		log.Printf("WARNING: Written bytes in UDP socket did not match packet size. Packet: %v Written: %v",
-			responsePacket.Length, bytesWritten)
+			packet.Length, bytesWritten)
 	}
 
 	return err

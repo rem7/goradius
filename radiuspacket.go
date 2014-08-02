@@ -3,19 +3,18 @@ package goradius
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"strings"
 )
 
-type RadiusRawAttribute struct {
-	TypeValue uint8
-	Length    uint8
-	Value     []byte
-}
+var (
+	HEADER_SIZE = 20
+)
 
 type RadiusHeader struct {
 	Code          uint8
@@ -24,112 +23,137 @@ type RadiusHeader struct {
 	Authenticator [authenticatorLength]byte
 }
 
+type RadiusAttribute struct {
+	Type   uint8
+	Length uint8
+	Value  []byte
+}
+
 type RadiusPacket struct {
 	RadiusHeader
-	Attributes map[string][]byte
+	Attributes []RadiusAttribute
 	Addr       *net.UDPAddr
 }
 
 func NewRadiusPacket() *RadiusPacket {
 	var p RadiusPacket
-	p.Attributes = make(map[string][]byte)
+	// p.Attributes = make(map[string][]byte)
 	return &p
 
 }
 
-func (p *RadiusPacket) AddAttribute(attrType string, value []byte) error {
+func (p *RadiusPacket) AddAttribute(attrTypeStr string, value []byte) error {
 
-	p.Attributes[attrType] = value
-
-	return nil
-}
-
-func (r *RadiusPacket) GenerateAuthenticator() {
-
-	for i := range r.RadiusHeader.Authenticator {
-		r.RadiusHeader.Authenticator[i] = byte(rand.Int())
-	}
-}
-
-func (r *RadiusPacket) GenerateId() {
-	r.RadiusHeader.Identifier = uint8(rand.Int() % 256)
-}
-
-func (p *RadiusPacket) GetAttribute(attrType string) []byte {
-
-	return p.Attributes[attrType]
-
-}
-
-func EncodeRADIUSPacket(packet *RadiusPacket, secret string, recalculateAuthenticator bool) ([]byte, error) {
-
-	newBuf := bytes.NewBuffer([]byte{})
-	binary.Write(newBuf, binary.BigEndian, &packet.RadiusHeader)
-
-	// Write in all the attributes
-	for attrName, attrValue := range packet.Attributes {
-		rawAttr := RadiusRawAttribute{}
-
-		if attrName == "" {
-			continue
+	var err error
+	if attrTypeCode, ok := attributes_to_code[attrTypeStr]; ok {
+		attr := RadiusAttribute{
+			Type:  attrTypeCode,
+			Value: value,
 		}
 
-		if attrCode, ok := attributes_to_code[attrName]; ok {
-			rawAttr.TypeValue = attrCode
+		p.Attributes = append(p.Attributes, attr)
+		err = nil
+	} else {
+		err = errors.New("Attribute not found")
+	}
+
+	return err
+}
+
+func (p *RadiusPacket) GetAttribute(attrType string) [][]byte {
+
+	var attrs [][]byte
+
+	if attrTypeCode, ok := attributes_to_code[attrType]; ok {
+		for _, v := range p.Attributes {
+
+			if v.Type == attrTypeCode {
+				attrs = append(attrs, v.Value)
+			}
+
+		}
+	}
+
+	return attrs
+}
+
+func (p *RadiusPacket) GetFirstAttributeAsString(attrType string) string {
+
+	attr := ""
+
+	if attrTypeCode, ok := attributes_to_code[attrType]; ok {
+		for _, v := range p.Attributes {
+			if v.Type == attrTypeCode {
+				attr = string(v.Value)
+				break
+			}
+		}
+	}
+
+	return attr
+}
+
+func (r *RadiusPacket) encodeAttrs(secret string) []byte {
+
+	buf := bytes.NewBuffer([]byte{})
+
+	for _, attr := range r.Attributes {
+
+		if attr.Type == 2 {
+			password_data := encryptPassword(secret, r.Authenticator, attr.Value)
+			attr.Length = uint8(len(password_data))
+			attr.Value = password_data[:]
 		} else {
-			log.Printf("attribute not supported: %v", attrName)
-			continue
+			attr.Length = uint8(len(attr.Value))
 		}
 
-		if rawAttr.TypeValue == 26 {
-			// TODO: handle vendor specific
-			rawAttr.TypeValue = 26
-		}
-
-		err := binary.Write(newBuf, binary.BigEndian, &rawAttr.TypeValue)
-		if err != nil {
-			log.Printf("Failed to write!")
-			return nil, err
-		}
-
-		// Dirty. I don't know how I feel about this.
-		rawAttrLength := uint8(len(attrValue)) + 2
-		err = binary.Write(newBuf, binary.BigEndian, &rawAttrLength)
-		checkErr("err 1", err)
-		err = binary.Write(newBuf, binary.BigEndian, &attrValue)
-		checkErr("err 2", err)
+		buf.Write(attr.Bytes())
 	}
 
-	output := newBuf.Bytes()
-	packet.RadiusHeader.Length = uint16(len(output))
+	return buf.Bytes()
+}
 
-	// Now that we have written all the attributes
-	// we know the size and we can override it.
-	currentSize := len(output)
-	var h, l uint8 = uint8(uint16(currentSize) >> 8), uint8(uint16(currentSize) & 0xff)
-	packet.Length = uint16(currentSize)
-	output[2] = h
-	output[3] = l
+func (r *RadiusAttribute) Bytes() []byte {
 
-	// Calculate the md5 with the previous authenticator
-	// and the current secret.
-	// chicken and egg... what?
-	if recalculateAuthenticator {
-		md5c := md5.New()
-		md5c.Write(output)
-		md5c.Write([]byte(secret))
-		sum := md5c.Sum(nil)
+	buf := bytes.NewBuffer([]byte{})
 
-		// Add the new authenticator data
-		offset := 4
-		for _, bval := range sum {
-			output[offset] = bval
-			offset += 1
-		}
-
+	err := binary.Write(buf, binary.BigEndian, &r.Type)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	return output, nil
+	r.Length = uint8(len(r.Value) + 2)
+	err = binary.Write(buf, binary.BigEndian, &r.Length)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = binary.Write(buf, binary.BigEndian, r.Value[:])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return buf.Bytes()
+
+}
+
+func (r *RadiusPacket) EncodePacket(secret string) ([]byte, error) {
+
+	// encode all attrs first
+	attrs_data := r.encodeAttrs(secret)
+	attrs_size := len(attrs_data)
+	r.Length = uint16(attrs_size + HEADER_SIZE)
+
+	buf := bytes.NewBuffer([]byte{})
+
+	err := binary.Write(buf, binary.BigEndian, &r.RadiusHeader)
+	if err != nil {
+		return nil, err
+	}
+
+	err = binary.Write(buf, binary.BigEndian, attrs_data)
+
+	return buf.Bytes(), err
 
 }
 
@@ -148,7 +172,7 @@ func ParseRADIUSPacket(rawMsg []byte, secret string) (*RadiusPacket, error) {
 	rawAttributes := parseAttributes(rawAttributesBytes, packet.Authenticator, secret)
 
 	for _, attr := range rawAttributes {
-		name := code_to_attributes[attr.TypeValue]
+		name := code_to_attributes[attr.Type]
 		packet.AddAttribute(name, attr.Value)
 	}
 
@@ -156,9 +180,9 @@ func ParseRADIUSPacket(rawMsg []byte, secret string) (*RadiusPacket, error) {
 
 }
 
-func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) []RadiusRawAttribute {
+func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) []RadiusAttribute {
 
-	var attrs []RadiusRawAttribute
+	var attrs []RadiusAttribute
 	reader := bytes.NewBuffer(data)
 
 	for {
@@ -189,16 +213,59 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 			value = decryptPassword(secret, value, requestAuthenticator)
 		}
 
-		attr := RadiusRawAttribute{
-			TypeValue: attr_type,
-			Length:    length,
-			Value:     value,
+		attr := RadiusAttribute{
+			Type:   attr_type,
+			Length: length,
+			Value:  value,
 		}
 		attrs = append(attrs, attr)
 
 	}
 
 	return attrs
+}
+
+func GenerateRandomAuthenticator() [16]byte {
+
+	b := make([]byte, 16)
+	n, err := rand.Read(b)
+	if err != nil {
+		panic(err)
+	}
+
+	if n != 16 {
+		log.Fatalf("Could not generate just 16 bytes")
+	}
+
+	var ret [16]byte
+	copy(ret[:], b[:16])
+	return ret
+}
+
+func paddAttr(data []byte, size int) []byte {
+	padded := make([]byte, size)
+	for i, b := range data {
+		padded[i] = b
+	}
+	return padded
+}
+
+func encryptPassword(secret string, authenticator [16]byte, password []byte) [16]byte {
+
+	paddedPassword := paddAttr(password, 16)
+
+	_b := md5.New()
+	_b.Write([]byte(secret))
+	_b.Write(authenticator[:])
+	b := _b.Sum(nil)
+
+	xored := [16]byte{}
+
+	for i := 0; i < 16; i++ {
+		xored[i] = paddedPassword[i] ^ b[i]
+	}
+
+	return xored
 }
 
 func decryptPassword(secret string, value []byte, requestAuthenticator [16]byte) []byte {
