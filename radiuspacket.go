@@ -42,6 +42,21 @@ func NewRadiusPacket() *RadiusPacket {
 
 }
 
+func (r *RadiusPacket) Duplicate() *RadiusPacket {
+
+	dest := RadiusPacket{}
+	dest.Code = r.Code
+	dest.Identifier = r.Identifier
+	dest.Length = r.Length
+	dest.Authenticator = r.Authenticator
+
+	for _, attr := range r.Attributes {
+		dest.Attributes = append(dest.Attributes, attr)
+	}
+
+	return &dest
+}
+
 func (p *RadiusPacket) AddAttribute(attrTypeStr string, value []byte) error {
 
 	var err error
@@ -58,6 +73,17 @@ func (p *RadiusPacket) AddAttribute(attrTypeStr string, value []byte) error {
 	}
 
 	return err
+}
+
+func (p *RadiusPacket) AddAttributeByType(attrType uint8, value []byte) {
+
+	attr := RadiusAttribute{
+		Type:  attrType,
+		Value: value,
+	}
+
+	p.Attributes = append(p.Attributes, attr)
+
 }
 
 func (p *RadiusPacket) GetAttribute(attrType string) [][]byte {

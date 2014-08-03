@@ -202,6 +202,9 @@ func SendResponse(conn *net.UDPConn, addr *net.UDPAddr, packet *RadiusPacket, se
 
 	CalculateResponseAuthenticator(output, secret)
 
+	log.Printf("SendResponse code: %v", packet.Code)
+	log.Printf("%x", output)
+
 	bytesWritten, err := conn.WriteToUDP(output, addr)
 	if bytesWritten != int(packet.Length) {
 		log.Printf("WARNING: Written bytes in UDP socket did not match packet size. Packet: %v Written: %v",
