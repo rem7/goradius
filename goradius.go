@@ -167,7 +167,7 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 
 	// sometimes we want to silently drop packets
 	// so this should be moved out of here.
-	err = SendResponse(r.conn, addr, responsePacket, r.Secret, true)
+	err = SendPacket(r.conn, addr, responsePacket, r.Secret)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -193,17 +193,16 @@ func CalculateResponseAuthenticator(output []byte, secret string) {
 	}
 }
 
-func SendResponse(conn *net.UDPConn, addr *net.UDPAddr, packet *RadiusPacket, secret string, recalculateAuthenticator bool) error {
+func SendPacket(conn *net.UDPConn, addr *net.UDPAddr, packet *RadiusPacket, secret string) error {
 
 	output, err := packet.EncodePacket(secret)
 	if err != nil {
 		return err
 	}
 
-	CalculateResponseAuthenticator(output, secret)
-
-	log.Printf("SendResponse code: %v", packet.Code)
-	log.Printf("%x", output)
+	if packet.Code == 2 || packet.Code == 5 {
+		CalculateResponseAuthenticator(output, secret)
+	}
 
 	bytesWritten, err := conn.WriteToUDP(output, addr)
 	if bytesWritten != int(packet.Length) {
