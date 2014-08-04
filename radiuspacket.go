@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -35,11 +36,59 @@ type RadiusPacket struct {
 	Addr       *net.UDPAddr
 }
 
+/*
+ * RadiusHeader
+ */
+
+func (r RadiusHeader) String() string {
+	return fmt.Sprintf("Type: '%v' Identifier: %v Length: %v Authenticator: %x",
+		request_type_to_string[r.Code], r.Identifier, r.Length, r.Authenticator)
+}
+
+/*
+ * RadiusAttribute
+ */
+
+func (r RadiusAttribute) Bytes() []byte {
+
+	buf := bytes.NewBuffer([]byte{})
+
+	err := binary.Write(buf, binary.BigEndian, &r.Type)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	r.Length = uint8(len(r.Value) + 2)
+	err = binary.Write(buf, binary.BigEndian, &r.Length)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = binary.Write(buf, binary.BigEndian, r.Value[:])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return buf.Bytes()
+
+}
+
+func (r RadiusAttribute) String() string {
+	return fmt.Sprintf("%v: %x", code_to_attributes[r.Type], r.Value)
+}
+
+/*
+ * RadiusPacket
+ */
+
 func NewRadiusPacket() *RadiusPacket {
 	var p RadiusPacket
-	// p.Attributes = make(map[string][]byte)
 	return &p
 
+}
+
+func (r RadiusPacket) String() string {
+	return fmt.Sprintf("RadiusPacket{%v %v}", r.RadiusHeader, r.Attributes)
 }
 
 func (r *RadiusPacket) Duplicate() *RadiusPacket {
@@ -139,30 +188,6 @@ func (r *RadiusPacket) encodeAttrs(secret string) []byte {
 	return buf.Bytes()
 }
 
-func (r *RadiusAttribute) Bytes() []byte {
-
-	buf := bytes.NewBuffer([]byte{})
-
-	err := binary.Write(buf, binary.BigEndian, &r.Type)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	r.Length = uint8(len(r.Value) + 2)
-	err = binary.Write(buf, binary.BigEndian, &r.Length)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = binary.Write(buf, binary.BigEndian, r.Value[:])
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return buf.Bytes()
-
-}
-
 func (r *RadiusPacket) EncodePacket(secret string) ([]byte, error) {
 
 	// encode all attrs first
@@ -253,27 +278,23 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 
 func GenerateRandomAuthenticator() [16]byte {
 
-	b := make([]byte, 16)
-	n, err := rand.Read(b)
+	authenticator := [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	_, err := rand.Read(authenticator[:])
 	if err != nil {
 		panic(err)
 	}
 
-	if n != 16 {
-		log.Fatalf("Could not generate just 16 bytes")
-	}
-
-	var ret [16]byte
-	copy(ret[:], b[:16])
-	return ret
+	return authenticator
 }
 
 func paddAttr(data []byte, size int) []byte {
+
 	padded := make([]byte, size)
 	for i, b := range data {
 		padded[i] = b
 	}
 	return padded
+
 }
 
 func encryptPassword(secret string, authenticator [16]byte, password []byte) [16]byte {

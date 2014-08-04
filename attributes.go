@@ -77,6 +77,17 @@ var (
 	PortLimit              = 62
 	LoginLATPort           = 63
 
+	request_type_to_string = map[uint8]string{
+		1:  "AccessRequest",
+		2:  "AccessAccept",
+		3:  "AccessReject",
+		4:  "AccountingRequest",
+		5:  "AccountingResponse",
+		11: "AccessChallenge",
+		12: "StatusServer",
+		13: "StatusClient",
+	}
+
 	code_to_attributes = map[uint8]string{
 		1:  "User-Name",
 		2:  "User-Password",
