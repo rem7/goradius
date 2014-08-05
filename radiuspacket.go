@@ -36,6 +36,12 @@ type RadiusPacket struct {
 	Addr       *net.UDPAddr
 }
 
+type VendorSpecificAttribute struct {
+	VendorId     uint32
+	VendorType   uint8
+	VendorLength uint8
+}
+
 /*
  * RadiusHeader
  */
@@ -143,7 +149,23 @@ func (p *RadiusPacket) GetAttribute(attrType string) [][]byte {
 		for _, v := range p.Attributes {
 
 			if v.Type == attrTypeCode {
-				attrs = append(attrs, v.Value)
+
+				if v.Type == VendorSpecific {
+
+					reader := bytes.NewBuffer(v.Value)
+
+					vsa := VendorSpecificAttribute{}
+					err := binary.Read(reader, binary.BigEndian, &vsa)
+					if err != nil {
+						log.Fatal(err)
+					}
+
+					value := reader.Next(int(vsa.VendorLength))
+					attrs = append(attrs, value)
+				} else {
+					attrs = append(attrs, v.Value)
+				}
+
 			}
 
 		}
@@ -152,20 +174,19 @@ func (p *RadiusPacket) GetAttribute(attrType string) [][]byte {
 	return attrs
 }
 
-func (p *RadiusPacket) GetFirstAttributeAsString(attrType string) string {
+func (p *RadiusPacket) GetFirstAttribute(attrType string) []byte {
 
-	attr := ""
-
-	if attrTypeCode, ok := attributes_to_code[attrType]; ok {
-		for _, v := range p.Attributes {
-			if v.Type == attrTypeCode {
-				attr = string(v.Value)
-				break
-			}
-		}
+	var attr []byte
+	attrs := p.GetAttribute(attrType)
+	if len(attrs) > 0 {
+		attr = attrs[0]
 	}
 
 	return attr
+}
+
+func (p *RadiusPacket) GetFirstAttributeAsString(attrType string) string {
+	return string(p.GetFirstAttribute(attrType))
 }
 
 func (r *RadiusPacket) encodeAttrs(secret string) []byte {
@@ -174,11 +195,14 @@ func (r *RadiusPacket) encodeAttrs(secret string) []byte {
 
 	for _, attr := range r.Attributes {
 
-		if attr.Type == 2 {
+		switch attr.Type {
+		case UserPassword:
+			// We usually wanna decode the password because if we proxy it
+			// we will need to re-encode with the new secret  anyways
 			password_data := encryptPassword(secret, r.Authenticator, attr.Value)
 			attr.Length = uint8(len(password_data))
 			attr.Value = password_data[:]
-		} else {
+		default:
 			attr.Length = uint8(len(attr.Value))
 		}
 
@@ -241,6 +265,8 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 		var e error
 		var attr_type uint8
 		var length uint8
+		var value []byte
+		ok := false
 
 		attr_type, e = reader.ReadByte()
 		if e == io.EOF {
@@ -252,24 +278,37 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 			break
 		}
 
-		value := reader.Next(int(length) - 2)
-
-		if attr_type == 0 {
-			log.Printf("attr_type == 0?")
-			break
-		}
-
-		// If there is a password we should decrypt it
-		if attr_type == 2 {
+		switch attr_type {
+		case uint8(0):
+			log.Printf("attr_type 0?")
+		case uint8(UserPassword):
+			value = reader.Next(int(length) - 2)
 			value = decryptPassword(secret, value, requestAuthenticator)
+			ok = true
+		// case uint8(26):
+		// 	vsa := VendorSpecificAttribute{}
+		// 	e = binary.Read(reader, binary.BigEndian, &vsa)
+		// 	if e != nil {
+		// 		log.Fatal(e)
+		// 	}
+		// 	value = reader.Next(int(vsa.VendorLength))
+		// 	ok = true
+		// 	log.Printf("VSA: %+v", vsa)
+		// 	log.Printf("Venue-Id: %v", string(value))
+		default:
+			value = reader.Next(int(length) - 2)
+			ok = true
 		}
 
-		attr := RadiusAttribute{
-			Type:   attr_type,
-			Length: length,
-			Value:  value,
+		if ok {
+			attr := RadiusAttribute{
+				Type:   attr_type,
+				Length: length,
+				Value:  value,
+			}
+
+			attrs = append(attrs, attr)
 		}
-		attrs = append(attrs, attr)
 
 	}
 
