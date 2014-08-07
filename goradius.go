@@ -27,12 +27,7 @@ var (
 type RADIUSMiddleware func(*RadiusServer, *RadiusPacket, *RadiusPacket) (bool, bool)
 
 type RadiusServer struct {
-	Secret string
-	// still debating  how we want to handle the policy flow...
-	// do we have one handler and let the programmer deal with
-	// the flow, or
-	// do we do it middleware style were we jump from one
-	// function to the next...
+	Secret     string
 	handler    func(*RadiusPacket, *RadiusPacket) (bool, bool)   // option 1
 	middleware []func(*RadiusPacket, *RadiusPacket) (bool, bool) // option 2
 	conn       *net.UDPConn
@@ -57,6 +52,22 @@ func NewRadiusServer(mode rune) *RadiusServer {
 	r.Mode = mode
 	r.Sessions = make(map[string]bool)
 	r.Routes = make(map[uint8][]RADIUSMiddleware)
+
+	if VSAs == nil {
+		VSAs = make(map[string]VendorSpecificAttribute)
+	}
+
+	if Vendors == nil {
+		Vendors = make(map[string]uint32)
+	}
+
+	if VSAsLock == nil {
+		VSAsLock = new(sync.RWMutex)
+	}
+
+	if VendorsLock == nil {
+		VendorsLock = new(sync.RWMutex)
+	}
 
 	return &r
 }
@@ -256,11 +267,21 @@ func FindVSA(attr_name string) (VendorSpecificAttribute, error) {
 
 func LoadVSAFile(path string) {
 
-	VSAs = make(map[string]VendorSpecificAttribute)
-	Vendors = make(map[string]uint32)
+	if VSAs == nil {
+		VSAs = make(map[string]VendorSpecificAttribute)
+	}
 
-	VSAsLock = new(sync.RWMutex)
-	VendorsLock = new(sync.RWMutex)
+	if Vendors == nil {
+		Vendors = make(map[string]uint32)
+	}
+
+	if VSAsLock == nil {
+		VSAsLock = new(sync.RWMutex)
+	}
+
+	if VendorsLock == nil {
+		VendorsLock = new(sync.RWMutex)
+	}
 
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
