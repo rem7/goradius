@@ -14,6 +14,10 @@ const (
 )
 
 var (
+	ZeroedAuthenticator = [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+)
+
+var (
 	AccessRequest      = uint8(1)
 	AccessAccept       = uint8(2)
 	AccessReject       = uint8(3)

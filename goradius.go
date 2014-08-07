@@ -2,13 +2,22 @@ package goradius
 
 import (
 	"crypto/md5"
+	"io/ioutil"
 	"log"
 	"net"
+	"regexp"
+	"strconv"
+	"strings"
 )
 
 const (
 	headerEnd           = 20
 	authenticatorLength = 16
+)
+
+var (
+	VSAs    map[string]VendorSpecificAttribute
+	Vendors map[string]uint32
 )
 
 type RADIUSMiddleware func(*RadiusServer, *RadiusPacket, *RadiusPacket) (bool, bool)
@@ -44,6 +53,9 @@ func NewRadiusServer(mode rune) *RadiusServer {
 	r.Mode = mode
 	r.Sessions = make(map[string]bool)
 	r.Routes = make(map[uint8][]RADIUSMiddleware)
+
+	VSAs = make(map[string]VendorSpecificAttribute)
+	Vendors = make(map[string]uint32)
 
 	return &r
 }
@@ -153,11 +165,6 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 		return
 	}
 
-	// _, drop := r.handler(requestPacket, responsePacket)
-	// if drop {
-	// 	return
-	// }
-
 	if drop {
 		if r.OnDrop != nil {
 			r.OnDrop(r, requestPacket, nil)
@@ -180,6 +187,22 @@ func (r *RadiusServer) handleConn(rawMsgSize int, addr *net.UDPAddr, data []byte
 }
 
 func CalculateResponseAuthenticator(output []byte, secret string) {
+
+	md5c := md5.New()
+	md5c.Write(output)
+	md5c.Write([]byte(secret))
+	sum := md5c.Sum(nil)
+
+	// Add the new authenticator data
+	offset := 4
+	for _, bval := range sum {
+		output[offset] = bval
+		offset += 1
+	}
+}
+
+func CalculateAuthenticator(output []byte, secret string) {
+
 	md5c := md5.New()
 	md5c.Write(output)
 	md5c.Write([]byte(secret))
@@ -204,6 +227,10 @@ func SendPacket(conn *net.UDPConn, addr *net.UDPAddr, packet *RadiusPacket, secr
 		CalculateResponseAuthenticator(output, secret)
 	}
 
+	if packet.Code == 4 {
+		CalculateAuthenticator(output, secret)
+	}
+
 	bytesWritten, err := conn.WriteToUDP(output, addr)
 	if bytesWritten != int(packet.Length) {
 		log.Printf("WARNING: Written bytes in UDP socket did not match packet size. Packet: %v Written: %v",
@@ -211,4 +238,86 @@ func SendPacket(conn *net.UDPConn, addr *net.UDPAddr, packet *RadiusPacket, secr
 	}
 
 	return err
+}
+
+func LoadVSAFile(path string) {
+
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+
+	data_str := string(data)
+	lines := strings.Split(data_str, "\n")
+
+	// Extract all vendors
+	expr := `^VENDOR\t(?P<vendor_name>\w+)\t(?P<vendor_id>\d+)$`
+	exp, err := regexp.Compile(expr)
+
+	ctr := 0
+	for _, line := range lines {
+
+		if len(line) == 0 {
+			continue
+		}
+
+		matches := exp.FindStringSubmatch(line)
+		if len(matches) > 0 {
+			vendor_name := strings.Trim(matches[1], " \t")
+			vendor_id_int, _ := strconv.Atoi(matches[2])
+			vendor_id := uint32(vendor_id_int)
+			Vendors[vendor_name] = vendor_id
+			ctr += 1
+		}
+
+	}
+
+	log.Printf("Vendors loaded: %v", ctr)
+
+	// should match this:
+	// s := `ATTRIBUTE	BW-Venue-Id		7	string	Boingo`
+	attr_expr := `^ATTRIBUTE\s(?P<attribute>.+)\s(?P<code>\d+)\s(?P<content_type>\w+)\s(?P<vendor_name>\w+)$`
+	attr_exp, err := regexp.Compile(attr_expr)
+	if err != nil {
+		panic(err)
+	}
+
+	ctr = 0
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+
+		matches := attr_exp.FindStringSubmatch(line)
+		if len(matches) == 5 {
+
+			attr_name := strings.Trim(matches[1], " \t")
+			attr_code_str := strings.Trim(matches[2], " \t")
+			// attr_content_type := strings.Trim(matches[3], " \t")
+			attr_vendor := strings.Trim(matches[4], " \t")
+			attr_code, _ := strconv.Atoi(attr_code_str)
+
+			// current := fmt.Sprintf("%v %v %v %v", attr_name, attr_code_str, attr_content_type, attr_vendor)
+
+			if _, exists := VSAs[attr_name]; exists {
+				log.Printf("[WARNING] Duplicate VSA not stored: %v", attr_name)
+			} else {
+
+				vendor_id := Vendors[attr_vendor]
+
+				vsa := VendorSpecificAttribute{
+					VendorId:   vendor_id,
+					VendorType: uint8(attr_code),
+				}
+
+				VSAs[attr_name] = vsa
+				ctr += 1
+
+			}
+
+		}
+	}
+
+	log.Printf("VSAs loaded: %v", ctr)
+
 }

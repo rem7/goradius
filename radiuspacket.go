@@ -24,10 +24,14 @@ type RadiusHeader struct {
 	Authenticator [authenticatorLength]byte
 }
 
+// includes VSA attributes
 type RadiusAttribute struct {
-	Type   uint8
-	Length uint8
-	Value  []byte
+	Type         uint8
+	Length       uint8
+	VendorId     uint32
+	VendorType   uint8
+	VendorLength uint8
+	Value        []byte
 }
 
 type RadiusPacket struct {
@@ -262,51 +266,50 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 
 	for {
 
-		var e error
-		var attr_type uint8
-		var length uint8
-		var value []byte
+		var err error
+		attr := RadiusAttribute{}
+
 		ok := false
 
-		attr_type, e = reader.ReadByte()
-		if e == io.EOF {
+		attr.Type, err = reader.ReadByte()
+		if err == io.EOF {
 			break
 		}
 
-		length, e = reader.ReadByte()
-		if e == io.EOF {
+		attr.Length, err = reader.ReadByte()
+		if err == io.EOF {
 			break
 		}
 
-		switch attr_type {
+		switch attr.Type {
 		case uint8(0):
 			log.Printf("attr_type 0?")
 		case uint8(UserPassword):
-			value = reader.Next(int(length) - 2)
-			value = decryptPassword(secret, value, requestAuthenticator)
+			val := reader.Next(int(attr.Length) - 2)
+			attr.Value = decryptPassword(secret, val, requestAuthenticator)
 			ok = true
-		// case uint8(26):
-		// 	vsa := VendorSpecificAttribute{}
-		// 	e = binary.Read(reader, binary.BigEndian, &vsa)
-		// 	if e != nil {
-		// 		log.Fatal(e)
-		// 	}
-		// 	value = reader.Next(int(vsa.VendorLength))
-		// 	ok = true
-		// 	log.Printf("VSA: %+v", vsa)
-		// 	log.Printf("Venue-Id: %v", string(value))
+		case uint8(VendorSpecific):
+
+			vsa := VendorSpecificAttribute{}
+			err = binary.Read(reader, binary.BigEndian, &vsa)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			attr.VendorId = vsa.VendorId
+			attr.VendorType = vsa.VendorType
+			attr.VendorLength = vsa.VendorLength
+			attr.Value = reader.Next(int(vsa.VendorLength))
+			ok = true
+
+			// log.Printf("VSA: %+v", vsa)
+			// log.Printf("Venue-Id: %v", string(attr.Value))
 		default:
-			value = reader.Next(int(length) - 2)
+			attr.Value = reader.Next(int(attr.Length) - 2)
 			ok = true
 		}
 
 		if ok {
-			attr := RadiusAttribute{
-				Type:   attr_type,
-				Length: length,
-				Value:  value,
-			}
-
 			attrs = append(attrs, attr)
 		}
 
