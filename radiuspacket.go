@@ -193,45 +193,6 @@ func (p *RadiusPacket) GetFirstAttributeAsString(attrType string) string {
 	return string(p.GetFirstAttribute(attrType))
 }
 
-// func encodeVendorSpecificAttr() goradius.RadiusAttribute {
-
-// 	buf := bytes.NewBuffer([]byte{})
-
-// 	type Vsa struct {
-// 		VendorId     uint32
-// 		VendorType   uint8
-// 		VendorLength uint8
-// 	}
-
-// 	vattr := Vsa{
-// 		VendorId:     uint32(12344),
-// 		VendorType:   uint8(100),
-// 		VendorLength: uint8(8),
-// 	}
-
-// 	err := binary.Write(buf, binary.BigEndian, &vattr)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	venue := []byte("BW_12345")
-
-// 	err = binary.Write(buf, binary.BigEndian, &venue)
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-
-// 	log.Printf("vsa data: %x", buf.Bytes())
-// 	data := buf.Bytes()
-
-// 	attr := goradius.RadiusAttribute{
-// 		Type:  uint8(26),
-// 		Value: data,
-// 	}
-
-// 	return attr
-// }
-
 func encodeVendorSpecificAttr(attr RadiusAttribute) []byte {
 
 	vsa := VendorSpecificAttribute{
