@@ -193,12 +193,95 @@ func (p *RadiusPacket) GetFirstAttributeAsString(attrType string) string {
 	return string(p.GetFirstAttribute(attrType))
 }
 
+// func encodeVendorSpecificAttr() goradius.RadiusAttribute {
+
+// 	buf := bytes.NewBuffer([]byte{})
+
+// 	type Vsa struct {
+// 		VendorId     uint32
+// 		VendorType   uint8
+// 		VendorLength uint8
+// 	}
+
+// 	vattr := Vsa{
+// 		VendorId:     uint32(12344),
+// 		VendorType:   uint8(100),
+// 		VendorLength: uint8(8),
+// 	}
+
+// 	err := binary.Write(buf, binary.BigEndian, &vattr)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+
+// 	venue := []byte("BW_12345")
+
+// 	err = binary.Write(buf, binary.BigEndian, &venue)
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
+
+// 	log.Printf("vsa data: %x", buf.Bytes())
+// 	data := buf.Bytes()
+
+// 	attr := goradius.RadiusAttribute{
+// 		Type:  uint8(26),
+// 		Value: data,
+// 	}
+
+// 	return attr
+// }
+
+func encodeVendorSpecificAttr(attr RadiusAttribute) []byte {
+
+	vsa := VendorSpecificAttribute{
+		VendorId:     attr.VendorId,
+		VendorType:   attr.VendorType,
+		VendorLength: uint8(len(attr.Value)),
+	}
+
+	buf := bytes.NewBuffer([]byte{})
+	err := binary.Write(buf, binary.BigEndian, vsa)
+	if err != nil {
+		panic(err)
+	}
+
+	err = binary.Write(buf, binary.BigEndian, attr.Value)
+	if err != nil {
+		panic(err)
+	}
+
+	return buf.Bytes()
+
+}
+
+func CreateVSA(attrName string, value []byte) (RadiusAttribute, error) {
+
+	vsa, err := FindVSA(attrName)
+	if err != nil {
+		return RadiusAttribute{}, err
+	}
+
+	rattr := RadiusAttribute{
+		Type:       uint8(26),
+		VendorId:   vsa.VendorId,
+		VendorType: vsa.VendorType,
+		Value:      value,
+	}
+
+	rattr.Length = uint8(2 + len(rattr.Value))
+
+	return rattr, nil
+
+}
+
 func (r *RadiusPacket) encodeAttrs(secret string) []byte {
 
 	buf := bytes.NewBuffer([]byte{})
 
 	for _, attr := range r.Attributes {
 
+		encoded_ok := true
 		switch attr.Type {
 		case UserPassword:
 			// We usually wanna decode the password because if we proxy it
@@ -206,11 +289,18 @@ func (r *RadiusPacket) encodeAttrs(secret string) []byte {
 			password_data := encryptPassword(secret, r.Authenticator, attr.Value)
 			attr.Length = uint8(len(password_data))
 			attr.Value = password_data[:]
+		case VendorSpecific:
+			log.Printf("processing vendor specific")
+			vendor_data := encodeVendorSpecificAttr(attr)
+			attr.Length = uint8(len(vendor_data) + 2)
+			attr.Value = vendor_data[:]
 		default:
 			attr.Length = uint8(len(attr.Value))
 		}
 
-		buf.Write(attr.Bytes())
+		if encoded_ok {
+			buf.Write(attr.Bytes())
+		}
 	}
 
 	return buf.Bytes()
@@ -302,8 +392,8 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 			attr.Value = reader.Next(int(vsa.VendorLength))
 			ok = true
 
-			// log.Printf("VSA: %+v", vsa)
-			// log.Printf("Venue-Id: %v", string(attr.Value))
+			log.Printf("VSA: %+v", vsa)
+			log.Printf("Venue-Id: %v", string(attr.Value))
 		default:
 			attr.Value = reader.Next(int(attr.Length) - 2)
 			ok = true

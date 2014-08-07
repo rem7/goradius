@@ -2,12 +2,14 @@ package goradius
 
 import (
 	"crypto/md5"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -16,8 +18,10 @@ const (
 )
 
 var (
-	VSAs    map[string]VendorSpecificAttribute
-	Vendors map[string]uint32
+	VSAs        map[string]VendorSpecificAttribute
+	Vendors     map[string]uint32
+	VSAsLock    *sync.RWMutex
+	VendorsLock *sync.RWMutex
 )
 
 type RADIUSMiddleware func(*RadiusServer, *RadiusPacket, *RadiusPacket) (bool, bool)
@@ -53,9 +57,6 @@ func NewRadiusServer(mode rune) *RadiusServer {
 	r.Mode = mode
 	r.Sessions = make(map[string]bool)
 	r.Routes = make(map[uint8][]RADIUSMiddleware)
-
-	VSAs = make(map[string]VendorSpecificAttribute)
-	Vendors = make(map[string]uint32)
 
 	return &r
 }
@@ -240,7 +241,26 @@ func SendPacket(conn *net.UDPConn, addr *net.UDPAddr, packet *RadiusPacket, secr
 	return err
 }
 
+func FindVSA(attr_name string) (VendorSpecificAttribute, error) {
+
+	VSAsLock.RLock()
+	vsa, ok := VSAs[attr_name]
+	VSAsLock.RUnlock()
+
+	if ok {
+		return vsa, nil
+	} else {
+		return VendorSpecificAttribute{}, errors.New("VSA not found.")
+	}
+}
+
 func LoadVSAFile(path string) {
+
+	VSAs = make(map[string]VendorSpecificAttribute)
+	Vendors = make(map[string]uint32)
+
+	VSAsLock = new(sync.RWMutex)
+	VendorsLock = new(sync.RWMutex)
 
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -255,6 +275,8 @@ func LoadVSAFile(path string) {
 	exp, err := regexp.Compile(expr)
 
 	ctr := 0
+
+	VendorsLock.Lock()
 	for _, line := range lines {
 
 		if len(line) == 0 {
@@ -271,6 +293,7 @@ func LoadVSAFile(path string) {
 		}
 
 	}
+	VendorsLock.Unlock()
 
 	log.Printf("Vendors loaded: %v", ctr)
 
@@ -281,6 +304,9 @@ func LoadVSAFile(path string) {
 	if err != nil {
 		panic(err)
 	}
+
+	VendorsLock.RLock()
+	VSAsLock.Lock()
 
 	ctr = 0
 	for _, line := range lines {
@@ -317,6 +343,9 @@ func LoadVSAFile(path string) {
 
 		}
 	}
+
+	VendorsLock.RUnlock()
+	VSAsLock.Unlock()
 
 	log.Printf("VSAs loaded: %v", ctr)
 
