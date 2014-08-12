@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -128,7 +127,15 @@ func (p *RadiusPacket) AddAttribute(attrTypeStr string, value []byte) error {
 		p.Attributes = append(p.Attributes, attr)
 		err = nil
 	} else {
-		err = errors.New("Attribute not found")
+
+		vsa_attr, err := CreateVSA(attrTypeStr, value)
+		if err != nil {
+			return err
+		}
+
+		p.Attributes = append(p.Attributes, vsa_attr)
+		err = nil
+
 	}
 
 	return err
@@ -154,24 +161,33 @@ func (p *RadiusPacket) GetAttribute(attrType string) [][]byte {
 
 			if v.Type == attrTypeCode {
 
-				if v.Type == VendorSpecific {
-
-					reader := bytes.NewBuffer(v.Value)
-
-					vsa := VendorSpecificAttribute{}
-					err := binary.Read(reader, binary.BigEndian, &vsa)
-					if err != nil {
-						log.Fatal(err)
-					}
-
-					value := reader.Next(int(vsa.VendorLength))
-					attrs = append(attrs, value)
-				} else {
-					attrs = append(attrs, v.Value)
-				}
+				// if v.Type == VendorSpecific {
+				// 	reader := bytes.NewBuffer(v.Value)
+				// 	vsa := VendorSpecificAttribute{}
+				// 	err := binary.Read(reader, binary.BigEndian, &vsa)
+				// 	if err != nil {
+				// 		log.Fatal(err)
+				// 	}
+				// 	value := reader.Next(int(vsa.VendorLength))
+				// 	attrs = append(attrs, value)
+				// } else {
+				// }
+				attrs = append(attrs, v.Value)
 
 			}
 
+		}
+	} else {
+		log.Printf("Looking for VSA")
+		vsa, err := FindVSA(attrType)
+		if err == nil {
+			for _, v := range p.Attributes {
+				if v.Type == VendorSpecific {
+					if vsa.VendorId == v.VendorId && vsa.VendorType == v.VendorType {
+						attrs = append(attrs, v.Value)
+					}
+				}
+			}
 		}
 	}
 
@@ -216,6 +232,17 @@ func encodeVendorSpecificAttr(attr RadiusAttribute) []byte {
 
 }
 
+func VendorAttribute(attrName string, value []byte) RadiusAttribute {
+
+	attr, err := CreateVSA(attrName, value)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return attr
+
+}
+
 func CreateVSA(attrName string, value []byte) (RadiusAttribute, error) {
 
 	vsa, err := FindVSA(attrName)
@@ -251,7 +278,6 @@ func (r *RadiusPacket) encodeAttrs(secret string) []byte {
 			attr.Length = uint8(len(password_data))
 			attr.Value = password_data[:]
 		case VendorSpecific:
-			log.Printf("processing vendor specific")
 			vendor_data := encodeVendorSpecificAttr(attr)
 			attr.Length = uint8(len(vendor_data) + 2)
 			attr.Value = vendor_data[:]
@@ -302,8 +328,7 @@ func ParseRADIUSPacket(rawMsg []byte, secret string) (*RadiusPacket, error) {
 	rawAttributes := parseAttributes(rawAttributesBytes, packet.Authenticator, secret)
 
 	for _, attr := range rawAttributes {
-		name := code_to_attributes[attr.Type]
-		packet.AddAttribute(name, attr.Value)
+		packet.Attributes = append(packet.Attributes, attr)
 	}
 
 	return packet, nil
@@ -353,6 +378,7 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 			attr.Value = reader.Next(int(vsa.VendorLength))
 			ok = true
 
+			log.Printf("praseAttrs: %+v", vsa)
 			log.Printf("VSA: %+v", vsa)
 			log.Printf("Venue-Id: %v", string(attr.Value))
 		default:
