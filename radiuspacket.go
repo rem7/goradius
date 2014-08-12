@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"strings"
 )
 
 var (
@@ -274,7 +273,7 @@ func (r *RadiusPacket) encodeAttrs(secret string) []byte {
 		case UserPassword:
 			// We usually wanna decode the password because if we proxy it
 			// we will need to re-encode with the new secret  anyways
-			password_data := encryptPassword(secret, r.Authenticator, attr.Value)
+			password_data := xorPassword(secret, r.Authenticator, attr.Value, false)
 			attr.Length = uint8(len(password_data))
 			attr.Value = password_data[:]
 		case VendorSpecific:
@@ -362,7 +361,7 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 			log.Printf("attr_type 0?")
 		case uint8(UserPassword):
 			val := reader.Next(int(attr.Length) - 2)
-			attr.Value = decryptPassword(secret, val, requestAuthenticator)
+			attr.Value = xorPassword(secret, requestAuthenticator, val, true)
 			ok = true
 		case uint8(VendorSpecific):
 
@@ -416,45 +415,48 @@ func paddAttr(data []byte, size int) []byte {
 
 }
 
-func encryptPassword(secret string, authenticator [16]byte, password []byte) [16]byte {
+func xorPassword(secret string, authenticator [16]byte, password []byte, decrypt bool) []byte {
 
-	paddedPassword := paddAttr(password, 16)
-
-	_b := md5.New()
-	_b.Write([]byte(secret))
-	_b.Write(authenticator[:])
-	b := _b.Sum(nil)
-
-	xored := [16]byte{}
-
-	for i := 0; i < 16; i++ {
-		xored[i] = paddedPassword[i] ^ b[i]
+	padding := 16
+	fields := 1
+	for {
+		res := fields * 16
+		if res >= len(password) {
+			padding = res
+			break
+		}
+		fields += 1
 	}
 
-	return xored
-}
+	paddedPassword := paddAttr(password, padding)
+	second_one_way_hash := authenticator
+	var password_out []byte
 
-func decryptPassword(secret string, value []byte, requestAuthenticator [16]byte) []byte {
+	for i := 0; i < padding; i = i + 16 {
 
-	// TODO: Allow passwords longer than 16 characters...
-	var bufr [16]byte
+		xored := make([]byte, 16)
+		newHash := md5.New()
+		newHash.Write([]byte(secret))
+		newHash.Write(second_one_way_hash[:])
+		newHashSum := newHash.Sum(nil)
 
-	S := []byte(secret)
-	c := requestAuthenticator[0:16]
+		for j := 0; j < 16; j++ {
+			xored[j] = paddedPassword[i+j] ^ newHashSum[j]
 
-	_b := md5.New()
-	_b.Write(S)
-	_b.Write(c)
-	b := _b.Sum(nil)
+			if xored[j] == 0x00 {
+				break
+			}
+		}
 
-	for i, p := range value {
-		bufr[i] = b[i] ^ p
+		if decrypt {
+			copy(second_one_way_hash[:], paddedPassword[i:i+16])
+		} else {
+			copy(second_one_way_hash[:], xored[:])
+		}
+
+		password_out = append(password_out, xored...)
+
 	}
 
-	idx := strings.Index(string(bufr[0:16]), "\x00")
-	ret := bufr[0:16]
-	if idx > 0 {
-		ret = bufr[:idx]
-	}
-	return ret
+	return password_out
 }
