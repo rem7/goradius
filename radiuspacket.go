@@ -213,7 +213,7 @@ func encodeVendorSpecificAttr(attr RadiusAttribute) []byte {
 	vsa := VendorSpecificAttribute{
 		VendorId:     attr.VendorId,
 		VendorType:   attr.VendorType,
-		VendorLength: uint8(len(attr.Value)),
+		VendorLength: uint8(len(attr.Value) + 2),
 	}
 
 	buf := bytes.NewBuffer([]byte{})
@@ -374,12 +374,13 @@ func parseAttributes(data []byte, requestAuthenticator [16]byte, secret string) 
 			attr.VendorId = vsa.VendorId
 			attr.VendorType = vsa.VendorType
 			attr.VendorLength = vsa.VendorLength
-			attr.Value = reader.Next(int(vsa.VendorLength))
+			attr.Value = reader.Next(int(vsa.VendorLength - 2))
 			ok = true
 
-			log.Printf("praseAttrs: %+v", vsa)
-			log.Printf("VSA: %+v", vsa)
-			log.Printf("Venue-Id: %v", string(attr.Value))
+			// log.Printf("praseAttrs: %+v", vsa)
+			// log.Printf("VSA: %+v", vsa)
+			// log.Printf("Value: %v", attr.Value)
+			// log.Printf("Value hex: %x", attr.Value)
 		default:
 			attr.Value = reader.Next(int(attr.Length) - 2)
 			ok = true

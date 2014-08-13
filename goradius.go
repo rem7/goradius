@@ -292,7 +292,7 @@ func LoadVSAFile(path string) {
 	lines := strings.Split(data_str, "\n")
 
 	// Extract all vendors
-	expr := `^VENDOR\t(?P<vendor_name>\w+)\t(?P<vendor_id>\d+)$`
+	expr := `^VENDOR\s(?P<vendor_name>\w+)\s(?P<vendor_id>\d+)$`
 	exp, err := regexp.Compile(expr)
 
 	ctr := 0
